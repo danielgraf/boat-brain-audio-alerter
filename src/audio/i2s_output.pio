@@ -1,0 +1,65 @@
+;
+; i2s_output.pio  —  I2S audio output for Raspberry Pi Pico / Pico 2
+; Target: MAX98357A I2S Class-D amplifier (or any standard I2S receiver)
+;
+; SPDX-License-Identifier: BSD-3-Clause
+;
+; ─── Pin mapping (configured in i2s_output.cpp) ─────────────────────────────
+;
+;   OUT  pin 0        : DIN  — serial audio data sent to the amplifier
+;   SIDE-SET pin 0    : BCLK — bit clock  (AUDIO_CLOCK_PIN_BASE + 0)
+;   SIDE-SET pin 1    : LRCLK/WS          (AUDIO_CLOCK_PIN_BASE + 1)
+;
+; ─── TX FIFO word format ─────────────────────────────────────────────────────
+;
+;   Each 32-bit word contains one stereo frame:
+;
+;     bits [31:16]  Left  channel — signed 16-bit PCM, MSB first
+;     bits [15: 0]  Right channel — signed 16-bit PCM, MSB first
+;
+;   The OSR is configured for LEFT shift (MSB first) with autopull at 32 bits.
+;
+; ─── I2S timing convention ───────────────────────────────────────────────────
+;
+;   LRCLK = 1  →  Left  channel being transmitted
+;   LRCLK = 0  →  Right channel being transmitted
+;   Data changes on BCLK falling edge; sampled on BCLK rising edge.
+;
+;   side-set encoding:
+;     0b00  →  BCLK=0, LRCLK=0  (right, data settling)
+;     0b01  →  BCLK=1, LRCLK=0  (right, rising edge)
+;     0b10  →  BCLK=0, LRCLK=1  (left,  data settling)
+;     0b11  →  BCLK=1, LRCLK=1  (left,  rising edge)
+;
+; ─── Timing ──────────────────────────────────────────────────────────────────
+;
+;   Each bit occupies 2 PIO cycles (one low, one high).
+;   32 bits per stereo frame  →  64 PIO cycles per sample.
+;   PIO clock = sample_rate × 64
+;   Example: 44 100 Hz  →  PIO clock ≈ 2.822 MHz
+;             (sys_clk 125 MHz  →  clkdiv ≈ 44.3)
+;
+
+.program i2s_output
+.side_set 2
+
+                    ;        /─── LRCLK
+                    ;        |/── BCLK
+public entry_point: ;        ||
+    set x, 14         side 0b11   ; Initialise x=14, clock lines idle high
+
+.wrap_target
+; ── Left channel (LRCLK = 1) ─────────────────────────────────────────────────
+bitloop_left:
+    out pins, 1       side 0b10   ; Output bit n, BCLK low  (data valid / settling)
+    jmp x-- bitloop_left side 0b11 ; BCLK high (rising edge — receiver latches bit)
+    out pins, 1       side 0b00   ; Output bit 0 of left, LRCLK transitions → right
+    set x, 14         side 0b01   ; BCLK high, reset counter, LRCLK = right (0)
+
+; ── Right channel (LRCLK = 0) ────────────────────────────────────────────────
+bitloop_right:
+    out pins, 1       side 0b00   ; Output bit n, BCLK low
+    jmp x-- bitloop_right side 0b01 ; BCLK high
+    out pins, 1       side 0b10   ; Output bit 0 of right, LRCLK transitions → left
+    set x, 14         side 0b11   ; BCLK high, reset counter, LRCLK = left (1)
+.wrap
