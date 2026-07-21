@@ -1,0 +1,4 @@
+# Core autopilot + tests: Python standard library only. No install required.
+#
+# Optional, for plots in the test harness (tools/run_sim.py --plot):
+#   matplotlib>=3.5
