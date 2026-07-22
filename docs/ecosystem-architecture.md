@@ -124,9 +124,10 @@ multiple controllers; absolute `set` is last-writer-wins.
   `SlotAssignment`/`ParameterUpdate`. The panel runs the *menu* locally and
   sends **semantic** commands (not raw ticks).
 - **NMEA 2000**: consume standard PGNs (127250 heading, 127251 ROT, 129026
-  COG/SOG, 130306 wind, 127245 rudder); publish standard **127237** Heading/Track
-  Control for MFD interop; use **proprietary boat-brain PGNs** for the command +
-  rich UX telemetry (steer_dir, lock, mode) that no standard carries.
+  COG/SOG, 130306 wind, 127245 rudder, plus 129284 nav-data + 129283 XTE for
+  track mode); publish standard **127237** Heading/Track Control for MFD interop;
+  use **proprietary boat-brain PGNs** for the command + rich UX telemetry
+  (steer_dir, lock, mode) that no standard carries.
 - **BLE / WebSocket**: the same state/command as JSON (WS reuses the simulator's
   shape) or a GATT service (BLE) — a thin adapter, no core changes.
 
@@ -158,9 +159,10 @@ inner heading PID. Adding one is a small, isolated change.
 |---|---|
 | heading | desired heading (have) |
 | cog | slow outer loop crabs to hold ground course (have) |
-| **windvane** | hold apparent (or true) wind angle → setpoint tracks wind (needs N2K 130306) |
-| **into-wind** | steer to AWA ≈ 0 and hold — for reefing/sail handling |
-| **tack** | one-shot manoeuvre: turn through ~100° (ST4000 Autotack) then resume |
+| **windvane** | hold true-wind angle → setpoint tracks the wind (have) |
+| **into-wind** | steer to TWA ≈ 0 and hold — for reefing/sail handling (have) |
+| **tack** | one-shot manoeuvre: through the eye to the mirror-image close-hauled heading (have) |
+| **track** | follow a route: slave the COG loop to the active waypoint's bearing from N2K nav data (have) |
 
 The controller's `Mode` becomes a small interface so windvane/into-wind/tack
 slot in beside heading/cog without touching the inner loop.
@@ -188,19 +190,24 @@ adapter.
    claiming; BTS7960 PiRam behind `BOAT_BRAIN_RAM=gpio`. Also carries the wind
    for windvane + the gybe guard.
 5. **Wind safety + modes** — done: wind telemetry, sail-zone, gybe/tack guard
-   (refuse-through-wind, now **configurable** — armed by default, drop either via
-   config or a runtime `set_guard`); **windvane** (hold a true-wind angle),
-   **into-wind** (steer to the eye for sail handling), and **auto-tack** (one-shot
-   through-the-eye manoeuvre that mirrors the wind angle onto the new bow and
-   restores the prior mode). Modes drive the existing inner heading loop from the
-   supervisor. To do: "steer the long way round" active gybe avoidance +
-   TWS-based caution.
-6. **Panel link + autopilot screen** — brain-side panel protocol (USB CDC now,
+   (refuse-through-wind, **configurable** — armed by default, drop either via
+   config or a runtime `set_guard`); **windvane**, **into-wind**, **auto-tack**;
+   **gybe avoidance** ("steer the long way round" — a would-be gybe is taken the
+   non-gybing way as a guided turn) with **TWS-scaled caution** (guards relax in
+   benign light air, and a gybe is always steered round above a strong-wind
+   threshold). Modes drive the existing inner loop from the supervisor.
+6. **Route following (track mode)** — done: consume N2K **129284** (bearing/
+   distance to the active waypoint, fast-packet — RX reassembly added) and
+   **129283** (cross-track error); track mode slaves the COG loop to the waypoint
+   bearing so the boat follows a plotter's planned passage leg by leg. Next:
+   read the route list (**129285**) for waypoint names on panels, and optional
+   own-position leg sequencing (**129029**).
+7. **Panel link + autopilot screen** — brain-side panel protocol (USB CDC now,
    RS-485 later) with the new `AutopilotState`/`AutopilotCommand` messages; the
    real smart-knob compass renderer + local menu state machine.
-7. **Audio alerter** — `PlayAlert` peripheral + brain-side event→alert dispatch
+8. **Audio alerter** — `PlayAlert` peripheral + brain-side event→alert dispatch
    (first trigger: the autopilot `off_course` alarm + engage/disengage chimes).
-8. **Remote adapter** — BLE/WS onto the same contract.
+9. **Remote adapter** — BLE/WS onto the same contract.
 
 ## Open decisions
 
