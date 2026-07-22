@@ -1,0 +1,41 @@
+{
+  "control_hz": 10.0,
+  "heading_filter_tau": 1.5,
+  "integral_fraction": 0.1,
+  "min_speed_knots": 1.0,
+  "nomoto": {
+    "K": 0.15,
+    "T": 3.0
+  },
+  "pid": {
+    "deadband": 1.5,
+    "gains": {
+      "kd": 13.333333333333334,
+      "ki": 0.308641975308642,
+      "kp": 6.17283950617284
+    },
+    "integral_active_band": 8.0,
+    "limits": {
+      "integral_limit": 20.0,
+      "output_max": 30.0,
+      "output_min": -30.0,
+      "slew_rate": 15.0
+    },
+    "rate_filter_tau": 1.0
+  },
+  "ram": {
+    "centre": 0.0,
+    "deadband_stroke": 0.03,
+    "max_rudder_deg": 35.0,
+    "mount_side": "port",
+    "port_stop": -1.0,
+    "starboard_stop": 1.0,
+    "symmetric_travel": true
+  },
+  "ram_speed_stroke_per_s": 2.0,
+  "ref_speed_knots": 6.0,
+  "speed_scheduling": true,
+  "target_damping": 0.9,
+  "target_natural_freq": null,
+  "target_settling_time": 8.0
+}

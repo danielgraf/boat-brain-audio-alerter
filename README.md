@@ -1,186 +1,164 @@
 # boat-brain autopilot
 
-Core "hold a true course" heading-hold autopilot for a boat brain: read heading
-from NMEA, compare against a dialled-in course, and drive an auto-helm ram with
-**smooth, well-damped tiller inputs** that don't hunt or induce oscillation.
-
-This first milestone is the **control core plus a test harness** — no hardware
-required to develop or tune. The ram driver is an abstraction with a hardware
-stub, so the whole loop runs against a boat simulator on a laptop, and drops
-onto the real ram by filling in two callbacks.
+Course-keeping autopilot for a boat brain, in Go, targeting a Raspberry Pi. It
+reads NMEA, holds a **heading** or a **course over ground (COG)**, and drives an
+auto-helm ram with smooth, well-damped tiller inputs that don't hunt. It ships
+with an **interactive web simulator** so you can develop, tune and demonstrate
+the whole loop with no hardware.
 
 ```
-   dial in heading ─▶ read NMEA heading ─▶ compare (shortest arc)
-                                              │
-                                     PID (damped) ─▶ rudder angle
-                                              │
-                                   ram (calibrated) ─▶ auto-helm
+  NMEA in ─▶ heading / COG ─▶ compare (shortest arc) ─▶ PID (damped) ─▶ ram ─▶ helm
+                    ▲                                        │
+              COG outer loop ───── nudges target heading ────┘   (crab into current)
 ```
 
-Pure Python standard library — no pip installs needed on the Pi. `matplotlib`
-is optional, only for plots in the test harness.
+Pure standard library except `golang.org/x/sys` (for the Pi serial port).
+Cross-compiles to a single static Pi binary; the web UI is embedded in it.
 
 ---
 
-## Why it doesn't hunt — the damping design
+## Quick start — the simulator
 
-A naive proportional controller makes a boat *hunt*: it weaves back and forth
-across the course, sawing the helm. Everything here is built to stop that, using
-the same techniques as commercial pilots (Raymarine, B&G, CPT) and the ship
-steering literature:
+```bash
+go run ./cmd/simulator          # open http://localhost:8080
+```
 
-| Technique | Where | What it does |
+Then, in the browser:
+
+- **Engage**, pick **Heading** or **COG track**, and dial a target with −10/−1/+1/+10.
+- Add **wind, waves and current** with the sliders and watch the pilot cope.
+- Drag the **Damping ζ** slider to feel the difference between crisp and hunting.
+
+The nav view shows the boat with its **heading** (bow) and **COG** (ground track)
+arrows, plus wind/current and the ground-track breadcrumb trail. The helm panel
+shows the **rudder, tiller and ram** moving. The instrument panel shows heading,
+COG, SOG, error, **crab angle**, rudder, ram %, and the live PID terms.
+
+### Why COG, not just heading
+
+Set a **3 kn current on the beam** and compare:
+
+| Mode | Result |
+|---|---|
+| **Heading hold 090°** | bow holds 090°, but current sweeps the **ground track to ~116°** — you miss the mark |
+| **COG track 090°** | bow **crabs to ~60°**, so the **ground track stays 090°** — you go where you aimed |
+
+COG hold is what you actually want for making good a course through current and
+leeway. See the design note below for how it's done safely.
+
+## Run the tests
+
+```bash
+go test ./...
+```
+
+Unit tests cover the heading math, PID damping features, ram calibration,
+Nomoto auto-tune, NMEA parsing, config round-trip, and **closed-loop
+convergence** for both heading-hold and the COG cascade (including the
+crab-into-current behaviour and the heading-drifts-under-current contrast).
+
+## Deploy to the Raspberry Pi
+
+```bash
+# cross-compile (Pi 3/4/Zero 2 = arm64; older Pi/Zero = GOARCH=arm GOARM=6/7)
+GOOS=linux GOARCH=arm64 go build -o autopilot ./cmd/autopilot
+
+# on the Pi:
+sudo ./autopilot -device /dev/ttyAMA0 -baud 4800 \
+     -config /etc/boatbrain/autopilot.json \
+     -stbd-pin 23 -port-pin 24 -cog 90
+```
+
+`-heading H` holds a compass heading; `-cog C` holds a ground course; neither =
+hold whatever heading it sees first. `Ctrl-C`/SIGTERM releases the helm cleanly.
+
+---
+
+## How it steers, and why it doesn't hunt
+
+A naive proportional controller makes a boat *hunt* — weave across the course,
+sawing the helm. The anti-hunting design mirrors commercial pilots and the
+ship-steering literature:
+
+| Technique | Package | Purpose |
 |---|---|---|
-| **Counter-rudder** (derivative on *yaw rate*, not error) | `pid.py` | Applies opposite rudder as the bow swings toward target — kills overshoot. The single most important anti-hunting term. |
-| **Deadband** (soft, ~1.5°) | `pid.py` | Ignores tiny heading wander so the helm doesn't chatter. |
-| **Motor deadband** (~0.7° of rudder) | `ram.py` | The ram won't move for sub-degree commands — the classic "dead-range" that stops actuator buzz. |
-| **Compass input filtering** | `controller.py` | Damps a noisy heading feed so the derivative term isn't fed noise. |
-| **Anti-windup** on the integral | `pid.py` | Integral stops accumulating at the rudder stops, so it can't wind up and overshoot. |
-| **PD during a course change, PID for keeping** | `pid.py` | Integral is suppressed while the error is large, so a big turn doesn't wind up the integral and crawl back. |
-| **Output slew-rate limit** | `pid.py` | Caps how fast the commanded rudder can change → smooth inputs. |
-| **Speed-scheduled gains** | `controller.py` | Rudder authority ∝ speed²; gains rescale with boat speed so it neither hunts at hull speed nor goes limp when slow. |
+| **Counter-rudder** (derivative on yaw rate) | `pid` | opposite rudder as the bow swings toward target — kills overshoot |
+| **Deadband** (soft) + **motor deadband** | `pid`, `ram` | ignore tiny wander / sub-degree commands so the helm doesn't chatter |
+| **Compass input filtering** | `controller` | don't feed the derivative term compass noise |
+| **Anti-windup** + **PD-during-turn, PID-for-keeping** | `pid` | integral can't wind up during a big turn and overshoot |
+| **Output slew-rate limit** | `pid` | smooth, rate-limited tiller inputs |
+| **Speed-scheduled gains** | `controller` | rudder authority ∝ speed² — no hunting at hull speed, no mush when slow |
 
-### Damping is *derived*, not guessed
-
-The boat's yaw behaves (to first order) like the **Nomoto model** `T·ṙ + r = K·δ`.
-With proportional + counter-rudder that gives a standard second-order closed
-loop, so `tuning.py` **places the poles** for a chosen damping ratio ζ:
+**Damping is derived, not guessed.** The boat's yaw is modelled as a first-order
+**Nomoto** system (`T·ṙ + r = K·δ`); with counter-rudder that's a standard
+second-order loop, so `tuning` places the poles for a chosen damping ratio ζ:
 
 ```
-Kp = ωₙ²·T / K
-Kd = (2·ζ·ωₙ·T − 1) / K
+Kp = ωₙ²·T / K            Kd = (2·ζ·ωₙ·T − 1) / K
 ```
 
-You pick two intuitive numbers: **ζ** (damping — 0.9 gives brisk, no-overshoot
-response) and either a **settling time** or bandwidth. The harness demonstrates
-the effect on a 30° step:
+ζ≈0.9 is the sweet spot (crisp, no overshoot). The ζ slider in the sim shows
+0.4 hunt badly and 1.2 go sluggish.
 
-| ζ | Overshoot | Settling | |
-|---|---|---|---|
-| 0.4 (under-damped) | 13.9° | never | hunts |
-| **0.9 (default)** | **3.2°** | **14 s** | **smooth** |
-| 1.2 (over-damped) | 2.7° | 58 s | sluggish |
+### COG steering (cascade)
 
-Sources: [B&G — autopilot performance functions](https://www.bandg.com/en-nz/blog/autopilots-understanding-performance-functions/),
-[CPT autopilot manual](https://www.cptautopilot.com/manual/autopilot_controls.html),
-[Nomoto steering-model autopilot design](https://www.researchgate.net/publication/277497099_Ships_Steering_Autopilot_Design_by_Nomoto_Model).
+COG can't be steered directly — it's noisy, lags, and is meaningless at low
+speed. So it's a **cascade**:
 
----
-
-## Quick start
-
-```bash
-# Run the closed-loop test harness across all scenarios (no dependencies):
-python tools/run_sim.py
-
-# Save plots (needs matplotlib) or raw CSV (no deps):
-python tools/run_sim.py --plot out/
-python tools/run_sim.py --csv out/
-
-# Explore damping / tuning:
-python tools/run_sim.py --zeta 0.7 --settling 6
-python tools/run_sim.py --scenario step --no-schedule
-
-# Run the unit tests:
-python -m unittest discover -s tests
-```
-
-The harness scores each scenario for exactly the things we're preventing —
-**overshoot, settling time, steady-state error, and helm reversals (the hunting
-proxy)** — and exits non-zero if any scenario blows its budget, so it doubles as
-a CI regression gate.
-
-## Live on the boat
-
-```bash
-# Reads NMEA from stdin/file, drives a (stubbed) hardware ram:
-python examples/run_live.py --config config.example.json --heading 90 < nmea.log
-```
-
-Two hardware touch-points to fill in (both clearly marked in
-`examples/run_live.py` and `autopilot/ram.py::HardwareRam`):
-
-1. **`drive(effort)`** — set your motor driver from an effort in `[-1, 1]` (mount-side sign already applied).
-2. **`read_stroke()`** — return your rudder-reference feedback, or `None` for dead-reckoned drive.
+- **Inner loop** — the fast heading-hold PID (above).
+- **Outer loop** — a slow controller that nudges the *target heading* until the
+  actual COG matches the desired ground course. The offset it settles on is the
+  **crab angle** needed to counter current and leeway. It's deliberately slow
+  (~40 s) for time-scale separation from the inner loop (~8 s), integrates only
+  near course (no windup during acquisition), and **falls back to heading-hold
+  below a speed threshold**, where COG is unusable.
 
 ---
 
 ## Setup & calibration
 
-Run the guided dockside walk-through:
+The boat-specific setup lives in the ram `Calibration` (persisted in the config
+JSON):
 
-```bash
-python examples/calibrate_ram.py
+- **Mount side** (`mount_side: port|starboard`) — sets the drive sense. If the
+  boat turns the wrong way, flip this one field; don't rewire.
+- **Centre + equal travel** — from a dockside end-stop sweep, centre is the
+  midpoint and `symmetric_travel` clamps usable stroke to the smaller half so
+  the helm has identical authority to port and starboard.
+- **Motor deadband** (`deadband_stroke`) — the ram ignores sub-degree commands
+  so it doesn't chatter.
+
+`config.example.json` is a complete, valid config you can copy and hand-edit.
+
+## Layout
+
+```
+cmd/simulator      interactive web sim (embeds the UI)
+cmd/autopilot      on-boat binary: NMEA serial -> controller -> GPIO ram
+internal/heading   wrap-safe compass math (shortest-arc error, COG from vector)
+internal/pid       damped heading PID (counter-rudder, deadband, anti-windup…)
+internal/tuning    Nomoto pole-placement auto-tune + K,T estimation
+internal/ram       ram calibration + SimRam + Pi GPIO driver (gpio_linux.go)
+internal/nmea      NMEA 0183 parser + serial reader (serial_linux.go)
+internal/controller  CourseKeeper: heading-hold + COG cascade
+internal/boatsim   first-order Nomoto boat model w/ wind, waves, current, COG
+internal/simserver Go SSE server + embedded canvas UI
+internal/config    config structs + JSON persistence
+reference/python   the earlier Python prototype (control core + sim harness)
 ```
 
-It captures the boat-specific setup the task called out:
+## Hardware notes (Pi)
 
-- **Which side the ram is mounted** (`mount_side`) — sets the drive sense, so a
-  reversed install is a one-line config change, not rewiring. Fixing it wrong
-  just flips `drive_sign`.
-- **Centering with equal travel each side** — you drive the ram gently to each
-  mechanical end stop and record the rudder-feedback reading. Centre is the
-  midpoint; with `symmetric_travel=True` the usable stroke is clamped to the
-  *smaller* half so the helm has identical authority to port and starboard
-  (a tiller pilot with unequal travel can chase a heading one way and run out of
-  ram the other).
+- **Ram** — two GPIO lines through an H-bridge/relay board (`-stbd-pin`,
+  `-port-pin`); mount-side sign is applied in software. Rudder-reference
+  feedback is optional: with none, stroke is dead-reckoned; with a pot, wire it
+  through an SPI ADC (e.g. MCP3008) and supply a feedback function to `PiRam`.
+- **NMEA** — 4800 baud on `/dev/ttyAMA0` (Pi UART) or a USB-serial GPS/compass
+  on `/dev/ttyUSB0`. HDT/HDM/HDG (heading), RMC/VTG (COG+SOG), ROT (rate of
+  turn — used directly when present, far cleaner than differentiating a compass).
 
-Calibration and tuning persist to a human-readable JSON file
-(`config.example.json` is a complete, valid example) that you can hand-edit on
-the boat.
+## Roadmap
 
----
-
-## Tuning guide
-
-1. **Get the boat's Nomoto K, T.** Either estimate by eye, or do a rudder-step
-   sea trial and let the code recover them:
-   ```python
-   from autopilot.tuning import estimate_nomoto_from_step
-   params = estimate_nomoto_from_step(times, yaw_rates, rudder_deg=10)
-   ```
-   `K` = steady yaw-rate ÷ rudder; `T` = time to reach 63% of steady yaw rate.
-
-2. **Auto-tune** for a feel:
-   ```python
-   cfg.nomoto = params
-   cfg.target_damping = 0.9        # 0.9 = no hunting; lower = livelier/looser
-   cfg.target_settling_time = 8.0  # seconds to settle after a correction
-   cfg.autotune()                  # sets Kp, Ki, Kd by pole placement
-   ```
-
-3. **Trim the comfort settings** to taste: `pid.deadband` (course-keeping
-   tightness), `ram.deadband_stroke` (helm quietness), `heading_filter_tau`
-   (compass smoothing), `pid.limits.slew_rate` (input smoothness).
-
-4. **Verify in the sim** before sea trials — `tools/run_sim.py` will show you
-   overshoot, settling and helm activity for your numbers.
-
-If in doubt, more counter-rudder (higher ζ) and a wider deadband cure hunting;
-too much makes the helm sluggish.
-
----
-
-## Architecture
-
-| Module | Responsibility |
-|---|---|
-| `autopilot/heading.py` | Wrap-safe compass math (shortest-arc error, yaw rate). |
-| `autopilot/nmea.py` | Minimal NMEA 0183 parser (HDT/HDM/HDG/ROT/VHW/RMC/VTG) + heading source. |
-| `autopilot/pid.py` | PID with counter-rudder, deadband, filtering, anti-windup, slew limit. |
-| `autopilot/ram.py` | Ram calibration (mount side, centre, symmetric travel) + Sim/Hardware actuators. |
-| `autopilot/tuning.py` | Nomoto pole-placement auto-tune + K,T estimation + gain scheduling. |
-| `autopilot/controller.py` | `CourseKeeper` — the top-level hold-a-course loop. |
-| `autopilot/config.py` | Config dataclasses + JSON persistence. |
-| `autopilot/simulator.py` | First-order Nomoto boat model + disturbances + scoring. |
-| `tools/run_sim.py` | Closed-loop test harness / regression gate. |
-| `examples/` | `calibrate_ram.py`, `run_live.py` hardware-integration skeletons. |
-
-## Status & roadmap
-
-Done: heading-hold core, damping, calibration, auto-tune, simulator, tests.
-
-Natural next steps: rate-of-turn limited course changes (turn at a set ROT),
-adaptive "sea state" gain/deadband, wind-vane (apparent-wind) steering, cross-
-track / waypoint steering, and the concrete GPIO/motor-driver + feedback wiring
-behind `HardwareRam`.
+Rate-of-turn-limited course changes (turn at a set ROT), an adaptive "sea state"
+mode, wind-vane (apparent-wind) steering, waypoint/cross-track steering, and a
+gpiochar/SPI-feedback ram driver.

@@ -1,6 +1,15 @@
+# Go
+/boat-brain-*
+/simulator
+/autopilot
+*.test
+*.out
+
+# Runtime config written on the boat
+autopilot.json
+
+# Python reference
 __pycache__/
 *.pyc
-.pytest_cache/
-out/
+reference/python/out/
 *.png
-autopilot.json

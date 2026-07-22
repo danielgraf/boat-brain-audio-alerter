@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>boat-brain autopilot simulator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>boat-brain <span>autopilot simulator</span></h1>
+  <div id="status" class="status standby">STANDBY</div>
+</header>
+
+<main>
+  <section class="views">
+    <div class="panel">
+      <h2>Nav view <small>north up</small></h2>
+      <canvas id="view" width="520" height="520"></canvas>
+      <div class="legend">
+        <span class="k head">■</span> heading
+        <span class="k cog">■</span> COG
+        <span class="k wind">■</span> wind
+        <span class="k cur">■</span> current
+        <span class="k trail">■</span> ground track
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Helm <small>rudder · tiller · ram</small></h2>
+      <canvas id="helm" width="340" height="300"></canvas>
+      <div id="helmreadout" class="helmreadout"></div>
+    </div>
+  </section>
+
+  <section class="side">
+    <div class="panel controls">
+      <h2>Autopilot</h2>
+      <div class="row">
+        <button id="engage" class="primary">Engage</button>
+        <button id="standby">Standby</button>
+      </div>
+      <div class="row seg">
+        <label>Mode</label>
+        <button id="mode-heading" class="seg-btn active">Heading</button>
+        <button id="mode-cog" class="seg-btn">COG track</button>
+      </div>
+      <div class="target">
+        <label>Target <span id="target-label">HDG</span></label>
+        <div class="dial">
+          <button data-adj="-10">−10</button>
+          <button data-adj="-1">−1</button>
+          <div id="target-val">000°</div>
+          <button data-adj="1">+1</button>
+          <button data-adj="10">+10</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Damping ζ <output id="zeta-out">0.90</output></label>
+        <input id="zeta" type="range" min="0.4" max="1.3" step="0.05" value="0.9">
+      </div>
+      <div class="row">
+        <button id="reset">Reset track</button>
+      </div>
+    </div>
+
+    <div class="panel env">
+      <h2>Environment</h2>
+      <div class="ctl"><label>Boat speed (STW)</label><input id="stw" type="range" min="0" max="10" step="0.1" value="6"><output id="stw-o">6.0 kn</output></div>
+      <div class="ctl"><label>Wind speed</label><input id="windspd" type="range" min="0" max="40" step="1" value="0"><output id="windspd-o">0 kn</output></div>
+      <div class="ctl"><label>Wind from</label><input id="winddir" type="range" min="0" max="359" step="1" value="0"><output id="winddir-o">000°</output></div>
+      <div class="ctl"><label>Wave yaw</label><input id="waveamp" type="range" min="0" max="4" step="0.1" value="0"><output id="waveamp-o">0.0</output></div>
+      <div class="ctl"><label>Wave period</label><input id="waveper" type="range" min="3" max="12" step="0.5" value="6"><output id="waveper-o">6.0 s</output></div>
+      <div class="ctl"><label>Current speed</label><input id="curspd" type="range" min="0" max="5" step="0.1" value="0"><output id="curspd-o">0.0 kn</output></div>
+      <div class="ctl"><label>Current toward</label><input id="curdir" type="range" min="0" max="359" step="1" value="90"><output id="curdir-o">090°</output></div>
+    </div>
+
+    <div class="panel instruments">
+      <h2>Instruments</h2>
+      <div class="grid">
+        <div><span>Heading</span><b id="i-hdg">—</b></div>
+        <div><span>COG</span><b id="i-cog">—</b></div>
+        <div><span>SOG</span><b id="i-sog">—</b></div>
+        <div><span>Setpoint</span><b id="i-set">—</b></div>
+        <div><span>Error</span><b id="i-err">—</b></div>
+        <div><span>Crab</span><b id="i-crab">—</b></div>
+        <div><span>Rudder</span><b id="i-rud">—</b></div>
+        <div><span>Ram</span><b id="i-ram">—</b></div>
+        <div><span>Mode</span><b id="i-mode">—</b></div>
+        <div><span>Reason</span><b id="i-reason">—</b></div>
+      </div>
+      <h3>Inner PID <small>(counter-rudder damping)</small></h3>
+      <div class="grid pid">
+        <div><span>Kp</span><b id="i-kp">—</b></div>
+        <div><span>Ki</span><b id="i-ki">—</b></div>
+        <div><span>Kd</span><b id="i-kd">—</b></div>
+        <div><span>P</span><b id="i-p">—</b></div>
+        <div><span>I</span><b id="i-i">—</b></div>
+        <div><span>D</span><b id="i-d">—</b></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
