@@ -47,6 +47,7 @@ type Tick struct {
 	RudderAchieved  float64 `json:"rudder_achieved"`
 	SpeedKnots      float64 `json:"speed_knots"`
 	Reason          string  `json:"reason"`
+	OffCourse       bool    `json:"off_course"` // heading off the locked course beyond alarm limits
 }
 
 // CourseKeeper is the closed-loop heading/COG controller.
@@ -73,6 +74,9 @@ type CourseKeeper struct {
 	crabIntegral float64
 	trackInit    bool
 	baseGains    pid.Gains
+
+	offCourseFor float64 // seconds the heading has been beyond the alarm limit
+	offCourse    bool
 }
 
 // New builds a CourseKeeper around a config and an actuator.
@@ -115,6 +119,8 @@ func (k *CourseKeeper) Engage(currentHeading float64) {
 	k.engaged = true
 	k.trackInit = false
 	k.crabIntegral = 0
+	k.offCourseFor = 0
+	k.offCourse = false
 	k.pid.Reset()
 	k.prevHeading = heading.Normalize360(currentHeading)
 	k.havePrev = true
@@ -255,6 +261,7 @@ func (k *CourseKeeper) Update(measuredHeading, dt float64, sensorYawRate, speedK
 	}
 
 	if !k.engaged {
+		k.offCourseFor, k.offCourse = 0, false
 		return Tick{
 			Mode: k.mode, DesiredHeading: k.desiredHeading, DesiredCOG: k.desiredCOG,
 			MeasuredHeading: measured, MeasuredCOG: measuredCOG, YawRate: rate,
@@ -284,6 +291,15 @@ func (k *CourseKeeper) Update(measuredHeading, dt float64, sensorYawRate, speedK
 
 	errDeg := heading.Error(k.headingSetpoint, measured)
 
+	// Off-course alarm: heading off the locked course beyond the limit for too
+	// long (ST4000 default 20° for 20 s).
+	if k.cfg.OffCourseDeg > 0 && math.Abs(errDeg) > k.cfg.OffCourseDeg {
+		k.offCourseFor += dt
+	} else {
+		k.offCourseFor = 0
+	}
+	k.offCourse = k.cfg.OffCourseSecs > 0 && k.offCourseFor >= k.cfg.OffCourseSecs
+
 	// Displayed crab: the actual offset of the bow from the ground track.
 	crab := heading.Error(measured, measuredCOG)
 	if k.mode != TrackCOG {
@@ -298,7 +314,7 @@ func (k *CourseKeeper) Update(measuredHeading, dt float64, sensorYawRate, speedK
 			Engaged: true, Mode: k.mode, DesiredHeading: k.desiredHeading, DesiredCOG: k.desiredCOG,
 			HeadingSetpoint: k.headingSetpoint, MeasuredHeading: measured, MeasuredCOG: measuredCOG,
 			Error: errDeg, YawRate: rate, Crab: crab, RudderCommand: k.ram.RudderAngle(),
-			RudderAchieved: achieved, SpeedKnots: speed, Reason: "low-steerage",
+			RudderAchieved: achieved, SpeedKnots: speed, Reason: "low-steerage", OffCourse: k.offCourse,
 		}
 	}
 
@@ -310,7 +326,7 @@ func (k *CourseKeeper) Update(measuredHeading, dt float64, sensorYawRate, speedK
 		Engaged: true, Mode: k.mode, DesiredHeading: k.desiredHeading, DesiredCOG: k.desiredCOG,
 		HeadingSetpoint: k.headingSetpoint, MeasuredHeading: measured, MeasuredCOG: measuredCOG,
 		Error: errDeg, YawRate: rate, Crab: crab, RudderCommand: rudderCmd,
-		RudderAchieved: achieved, SpeedKnots: speed, Reason: reason,
+		RudderAchieved: achieved, SpeedKnots: speed, Reason: reason, OffCourse: k.offCourse,
 	}
 }
 

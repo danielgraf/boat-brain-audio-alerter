@@ -13,7 +13,11 @@
     },
     "deadband": 1.5,
     "rate_filter_tau": 1,
-    "integral_active_band": 8
+    "integral_active_band": 8,
+    "adaptive_deadband": true,
+    "deadband_max": 6,
+    "seastate_gain": 1.2,
+    "seastate_tau": 4
   },
   "ram": {
     "mount_side": "port",
@@ -47,5 +51,7 @@
   "ref_speed_knots": 6,
   "speed_scheduling": true,
   "min_speed_knots": 1,
-  "heading_filter_tau": 1.5
+  "heading_filter_tau": 1.5,
+  "off_course_deg": 20,
+  "off_course_secs": 20
 }

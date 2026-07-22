@@ -72,6 +72,42 @@ func TestIntegralClamp(t *testing.T) {
 	}
 }
 
+func TestAdaptiveDeadbandWidensInSeaway(t *testing.T) {
+	p := testPID()
+	p.Config.Gains = Gains{Kp: 2}
+	p.Config.Deadband = 1.5
+	p.Config.AdaptiveDeadband = true
+	p.Config.DeadbandMax = 6
+	p.Config.SeastateGain = 1.2
+	p.Config.SeastateTau = 4
+	// Feed an oscillating error (wave-induced wiggle) around zero mean.
+	for i := 0; i < 4000; i++ {
+		e := 3 * math.Sin(float64(i)*0.05) // ±3° wiggle, zero mean
+		p.Update(e, 0, 0.05)
+	}
+	if p.Debug.Deadband <= 1.5 {
+		t.Errorf("adaptive deadband should widen in a seaway, got %v", p.Debug.Deadband)
+	}
+	if p.Debug.Deadband > 6.0001 {
+		t.Errorf("adaptive deadband should not exceed max, got %v", p.Debug.Deadband)
+	}
+}
+
+func TestAdaptiveDeadbandStaysTightOnFlatWater(t *testing.T) {
+	p := testPID()
+	p.Config.Deadband = 1.5
+	p.Config.AdaptiveDeadband = true
+	p.Config.DeadbandMax = 6
+	p.Config.SeastateGain = 1.2
+	p.Config.SeastateTau = 4
+	for i := 0; i < 2000; i++ {
+		p.Update(0.2, 0, 0.05) // steady, no wiggle
+	}
+	if p.Debug.Deadband > 1.8 {
+		t.Errorf("deadband should stay near base on flat water, got %v", p.Debug.Deadband)
+	}
+}
+
 func TestIntegralActiveBand(t *testing.T) {
 	p := testPID()
 	p.Config.Gains = Gains{Ki: 1}

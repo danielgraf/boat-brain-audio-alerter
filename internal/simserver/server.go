@@ -159,12 +159,13 @@ type boatStateJSON struct {
 }
 
 type pidJSON struct {
-	Kp float64 `json:"kp"`
-	Ki float64 `json:"ki"`
-	Kd float64 `json:"kd"`
-	P  float64 `json:"p"`
-	I  float64 `json:"i"`
-	D  float64 `json:"d"`
+	Kp       float64 `json:"kp"`
+	Ki       float64 `json:"ki"`
+	Kd       float64 `json:"kd"`
+	P        float64 `json:"p"`
+	I        float64 `json:"i"`
+	D        float64 `json:"d"`
+	Deadband float64 `json:"deadband"` // effective (adaptive) deadband
 }
 
 func (s *Server) snapshot() stateJSON {
@@ -190,7 +191,7 @@ func (s *Server) snapshot() stateJSON {
 			RudderDeg: s.ram.RudderAngle(), RamStroke: s.ram.Stroke(), RamPercent: pct,
 		},
 		Env:       s.env,
-		PID:       pidJSON{Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, P: d.P, I: d.I, D: d.D},
+		PID:       pidJSON{Kp: g.Kp, Ki: g.Ki, Kd: g.Kd, P: d.P, I: d.I, D: d.D, Deadband: d.Deadband},
 		Trail:     append([]point(nil), s.trail...),
 		MountSide: string(s.cfg.Ram.MountSide),
 	}

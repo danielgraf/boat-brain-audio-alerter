@@ -63,10 +63,13 @@ crab-into-current behaviour and the heading-drifts-under-current contrast).
 # cross-compile (Pi 3/4/Zero 2 = arm64; older Pi/Zero = GOARCH=arm GOARM=6/7)
 GOOS=linux GOARCH=arm64 go build -o autopilot ./cmd/autopilot
 
-# on the Pi:
+# verify ram direction + travel on the bench FIRST (drives stbd/port/centre):
+sudo ./autopilot -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -test-ram
+
+# then run it (ST4000 tiller has no clutch, so -clutch-pin defaults to none):
 sudo ./autopilot -device /dev/ttyAMA0 -baud 4800 \
      -config /etc/boatbrain/autopilot.json \
-     -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -clutch-pin 6 -cog 90
+     -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -cog 90
 ```
 
 `-heading H` holds a compass heading; `-cog C` holds a ground course; neither =
@@ -114,6 +117,24 @@ speed. So it's a **cascade**:
   below a speed threshold**, where COG is unusable.
 
 ---
+
+## Mapping to the ST4000 manual
+
+Every knob on the Autohelm ST4000 has a direct equivalent here, so bench/sea
+experience transfers straight across:
+
+| ST4000 control | Here | Notes |
+|---|---|---|
+| **Rudder Gain** (Cal 1) | `pid.gains.kp` (auto-tuned) | 40° turn → crisp with 2–5° overshoot = correct; >5° = too high |
+| **Rudder Damping** (Cal 13) | counter-rudder `pid.gains.kd` | "set as low as possible without hunting" — exactly what pole-placement does |
+| **Automatic Trim** (standing helm) | integral `pid.gains.ki` | slow trim of weather-helm offset ("can take up to a minute") |
+| **Auto seastate** (adaptive deadband) | `pid.adaptive_deadband` (+ `deadband_max`) | widens the deadband in a seaway to neglect repetitive movement |
+| **Drive / operating phase** | `ram.mount_side` | reverse for a port-mounted actuator; wrong = steers hard over |
+| **Off-course alarm** | `off_course_deg` / `off_course_secs` | ST4000 default 20° for 20 s; surfaced in the sim and the `autopilot` log |
+| **Rudder reference** (Cal 8) | `ram.Feedback` (SPI ADC) | optional; without it, stroke is dead-reckoned |
+
+The interactive sim shows the effective (auto-seastate) deadband live, and a
+pulsing **OFF COURSE** banner when the alarm trips.
 
 ## Setup & calibration
 
@@ -168,11 +189,18 @@ screw terminals take the 12 V battery feed. Direction is decided in software,
 so if the boat turns the wrong way just flip `mount_side` in the config — no
 rewiring.
 
-- **Clutch (ST4000/linear drives)** — the drive engages a clutch to couple the
-  motor to the helm. Wire the clutch through a relay/MOSFET on `-clutch-pin`
-  (GPIO6 by default). It's energised while engaged and **released on standby**,
-  so the wheel/tiller is free for hand steering. Set `-clutch-pin -1` for a
-  leadscrew drive with no clutch.
+- **No clutch on the ST4000 _tiller_ drive** — it's a leadscrew push-rod: standby
+  just stops the motor (the leadscrew self-holds) and you lift the push-rod off
+  the tiller pin to hand-steer. So `-clutch-pin` defaults to none. The clutch
+  option is only for wheel/linear drives that have one (relay/MOSFET on the pin,
+  energised while engaged, released on standby).
+- **Safe power-up** — a Pi's GPIOs are inputs (hi-Z) until the program drives
+  them, so fit **pull-down resistors (~10 kΩ) on RPWM, LPWM and EN** to hold the
+  bridge off at boot. The driver also drives all three low before enabling.
+- **Verify phase first** — run `-test-ram` on the bench: it drives starboard,
+  then port, then centre. Per the manual, `+rudder` must move the tiller to give
+  a **turn to starboard**; if reversed, flip `mount_side` (don't rewire). A
+  reversed phase is the classic "steers hard over on engage" failure.
 - **Ram speed** — bang-bang (full speed) by default, which is the most reliable.
   `-pwm-hz 200` enables best-effort software PWM so the ram eases off near
   target for a softer landing.

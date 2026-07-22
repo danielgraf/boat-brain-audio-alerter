@@ -200,8 +200,13 @@ function drawHelm(s) {
 // ---- instruments ------------------------------------------------------
 function updateInstruments(s) {
   const t = s.tick, b = s.boat, p = s.pid;
-  $("status").textContent = s.engaged ? "ENGAGED" : "STANDBY";
-  $("status").className = "status " + (s.engaged ? "engaged" : "standby");
+  if (t.off_course) {
+    $("status").textContent = "OFF COURSE";
+    $("status").className = "status offcourse";
+  } else {
+    $("status").textContent = s.engaged ? "ENGAGED" : "STANDBY";
+    $("status").className = "status " + (s.engaged ? "engaged" : "standby");
+  }
   $("i-hdg").textContent = fmtDeg(b.heading);
   $("i-cog").textContent = b.sog > 0.3 ? fmtDeg(b.cog) : "—";
   $("i-sog").textContent = b.sog.toFixed(1) + " kn";
@@ -218,6 +223,7 @@ function updateInstruments(s) {
   $("i-p").textContent = p.p.toFixed(1);
   $("i-i").textContent = p.i.toFixed(1);
   $("i-d").textContent = p.d.toFixed(1);
+  $("i-db").textContent = p.deadband.toFixed(1) + "°";
 }
 
 // ---- SSE stream -------------------------------------------------------

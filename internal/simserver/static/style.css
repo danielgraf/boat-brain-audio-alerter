@@ -18,6 +18,8 @@ h1 span { color: var(--dim); font-weight: 400; }
 .status { margin-left: auto; padding: 6px 14px; border-radius: 6px; font-weight: 700; letter-spacing: 1px; }
 .status.standby { background: #3a2320; color: var(--warn); }
 .status.engaged { background: #123024; color: var(--ok); }
+.status.offcourse { background: #4a1414; color: #ff5a5a; animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 main { display: flex; gap: 16px; padding: 16px; align-items: flex-start; flex-wrap: wrap; }
 .views { display: flex; gap: 16px; flex-wrap: wrap; }

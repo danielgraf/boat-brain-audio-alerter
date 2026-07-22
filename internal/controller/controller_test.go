@@ -104,6 +104,49 @@ func TestHeadingHoldDriftsUnderCurrent(t *testing.T) {
 	}
 }
 
+func TestOffCourseAlarm(t *testing.T) {
+	cfg := config.Default()
+	cfg.OffCourseDeg = 20
+	cfg.OffCourseSecs = 20
+	rw := ram.NewSimRam(cfg.Ram, cfg.RamSpeedStroke)
+	k := New(cfg, rw)
+	k.Engage(0)
+	k.SetHeading(0)
+	// Hold the boat 40° off course (simulate a stuck heading) for >20 s.
+	var last Tick
+	for i := 0; i < int(25/0.1); i++ {
+		stw := 6.0
+		last = k.Update(40, 0.1, nil, &stw, nil, nil)
+	}
+	if !last.OffCourse {
+		t.Errorf("off-course alarm should fire after >20s at 40° off, got %+v", last.OffCourse)
+	}
+	// Back on course clears it (allow the heading input filter to catch up).
+	for i := 0; i < 100; i++ {
+		stw := 6.0
+		last = k.Update(0, 0.1, nil, &stw, nil, nil)
+	}
+	if last.OffCourse {
+		t.Error("alarm should clear once back on course")
+	}
+}
+
+func TestOffCourseNotBeforeDelay(t *testing.T) {
+	cfg := config.Default()
+	rw := ram.NewSimRam(cfg.Ram, cfg.RamSpeedStroke)
+	k := New(cfg, rw)
+	k.Engage(0)
+	k.SetHeading(0)
+	var last Tick
+	for i := 0; i < int(10/0.1); i++ { // only 10 s < 20 s threshold
+		stw := 6.0
+		last = k.Update(40, 0.1, nil, &stw, nil, nil)
+	}
+	if last.OffCourse {
+		t.Error("alarm should not fire before the persistence delay")
+	}
+}
+
 func TestLowSteerageHoldsRudder(t *testing.T) {
 	_, _, k := build()
 	k.Engage(30)

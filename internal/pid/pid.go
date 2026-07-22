@@ -44,6 +44,16 @@ type Config struct {
 	Deadband           float64 `json:"deadband"`             // heading error ignored within ± this (deg)
 	RateFilterTau      float64 `json:"rate_filter_tau"`      // low-pass time constant for the rate term (s)
 	IntegralActiveBand float64 `json:"integral_active_band"` // only integrate when |error| <= this (deg)
+
+	// Auto-seastate: an adaptive deadband, like the ST4000's "Auto seastate".
+	// When enabled the deadband grows toward DeadbandMax in proportion to the
+	// boat's repetitive (wave-induced) course wiggle, so the helm neglects
+	// unnecessary movement in a seaway while a true course change (a slow,
+	// one-sided error) still gets full response.
+	AdaptiveDeadband bool    `json:"adaptive_deadband"`
+	DeadbandMax      float64 `json:"deadband_max"`  // upper limit of the adaptive deadband (deg)
+	SeastateGain     float64 `json:"seastate_gain"` // deg of extra deadband per deg of wiggle
+	SeastateTau      float64 `json:"seastate_tau"`  // averaging time for the wiggle estimate (s)
 }
 
 // DefaultConfig returns sensible limits and a wide-open integral band.
@@ -70,6 +80,7 @@ type Debug struct {
 	Output       float64 `json:"output"`
 	FilteredRate float64 `json:"filtered_rate"`
 	Saturated    bool    `json:"saturated"`
+	Deadband     float64 `json:"deadband"` // effective (possibly adaptive) deadband
 }
 
 // PID is a discrete PID heading controller. Call Update once per control tick.
@@ -80,6 +91,10 @@ type PID struct {
 	filteredRate float64
 	output       float64
 	haveRate     bool
+	fastError    float64 // fast low-pass of the error (band-pass, upper edge)
+	slowError    float64 // slow low-pass of the error (band-pass, lower edge)
+	wiggle       float64 // low-passed oscillatory course wiggle (deg)
+	haveSlow     bool
 	Debug        Debug
 }
 
@@ -92,7 +107,46 @@ func (p *PID) Reset() {
 	p.filteredRate = 0
 	p.output = 0
 	p.haveRate = false
+	p.fastError = 0
+	p.slowError = 0
+	p.wiggle = 0
+	p.haveSlow = false
 	p.Debug = Debug{}
+}
+
+// effectiveDeadband returns the deadband to use this tick. With AdaptiveDeadband
+// ("Auto seastate") it grows from Deadband toward DeadbandMax in proportion to
+// the boat's repetitive course wiggle — the high-frequency part of the error
+// that a true course change does not produce.
+func (p *PID) effectiveDeadband(errDeg, dt float64) float64 {
+	base := p.Config.Deadband
+	if !p.Config.AdaptiveDeadband {
+		return base
+	}
+	tau := p.Config.SeastateTau
+	if tau <= 0 {
+		tau = 4
+	}
+	// Band-pass the error: a fast average (~1 s) minus a slow average (~8 s).
+	// Wave-induced oscillation lives in this band; a steady offset (both equal)
+	// and a one-off course change (both track it) do not, so neither widens the
+	// deadband — only genuinely repetitive movement does.
+	if !p.haveSlow {
+		p.fastError, p.slowError = errDeg, errDeg
+		p.haveSlow = true
+	} else {
+		p.fastError += dt / (1.0 + dt) * (errDeg - p.fastError)
+		p.slowError += dt / (8.0 + dt) * (errDeg - p.slowError)
+	}
+	band := math.Abs(p.fastError - p.slowError)
+	p.wiggle += dt / (tau + dt) * (band - p.wiggle)
+
+	max := p.Config.DeadbandMax
+	if max < base {
+		max = base
+	}
+	eff := base + p.Config.SeastateGain*p.wiggle
+	return clamp(eff, base, max)
 }
 
 // Output returns the last commanded rudder angle (deg).
@@ -127,8 +181,10 @@ func (p *PID) Update(errDeg, rateOfTurn, dt float64) float64 {
 	lim := p.Config.Limits
 
 	// Deadband first: within the band the boat is "on course", so we neither
-	// push proportionally nor wind up the integral.
-	dbError := softDeadband(errDeg, p.Config.Deadband)
+	// push proportionally nor wind up the integral. The band may adapt to sea
+	// state (ST4000 "Auto seastate").
+	deadband := p.effectiveDeadband(errDeg, dt)
+	dbError := softDeadband(errDeg, deadband)
 	filteredRate := p.filterRate(rateOfTurn, dt)
 
 	// Proportional.
@@ -163,7 +219,7 @@ func (p *PID) Update(errDeg, rateOfTurn, dt float64) float64 {
 
 	p.Debug = Debug{
 		P: pTerm, I: p.integral, D: dTerm, Raw: raw, Output: p.output,
-		FilteredRate: filteredRate, Saturated: saturated,
+		FilteredRate: filteredRate, Saturated: saturated, Deadband: deadband,
 	}
 	return p.output
 }

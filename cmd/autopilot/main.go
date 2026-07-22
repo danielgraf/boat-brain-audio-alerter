@@ -35,8 +35,9 @@ func main() {
 		rpwmPin   = flag.Int("rpwm-pin", 18, "BCM pin -> BTS7960 RPWM (drive toward starboard rudder)")
 		lpwmPin   = flag.Int("lpwm-pin", 13, "BCM pin -> BTS7960 LPWM (drive toward port rudder)")
 		enPin     = flag.Int("en-pin", 12, "BCM pin -> BTS7960 R_EN+L_EN (tied together); <0 if hardwired high")
-		clutchPin = flag.Int("clutch-pin", 6, "BCM pin -> drive-unit clutch; <0 for no clutch")
+		clutchPin = flag.Int("clutch-pin", -1, "BCM pin -> drive-unit clutch; <0 for none (ST4000 tiller has no clutch)")
 		pwmHz     = flag.Float64("pwm-hz", 0, "software PWM freq for ram speed (0 = bang-bang / full speed)")
+		testRam   = flag.Bool("test-ram", false, "drive the ram starboard/port/centre and exit (verify phase + travel)")
 		holdHead  = flag.Float64("heading", -1, "heading to hold (deg); <0 = hold current")
 		holdCOG   = flag.Float64("cog", -1, "course over ground to hold (deg); enables COG track")
 		hz        = flag.Float64("hz", 10, "control loop rate (Hz)")
@@ -67,6 +68,14 @@ func main() {
 		log.Fatalf("ram: %v", err)
 	}
 	defer piRam.Close()
+
+	// Ram phase/travel self-test (the manual's functional test). Confirms the
+	// drive moves the tiller the right way before we ever trust it to steer —
+	// a reversed phase is the "steers hard over on engage" failure.
+	if *testRam {
+		runRamTest(piRam, cfg.Ram.MaxRudderDeg)
+		return
+	}
 
 	// Open the NMEA serial feed.
 	port, err := nmea.OpenSerial(*device, *baud)
@@ -108,6 +117,7 @@ func main() {
 	defer ticker.Stop()
 	last := time.Now()
 	engaged := false
+	offCourse := false
 
 	for now := range ticker.C {
 		dt := now.Sub(last).Seconds()
@@ -142,7 +152,11 @@ func main() {
 
 		// SOG doubles as the steerage-speed signal when present.
 		tick := keeper.Update(heading, dt, rot, spd, cog, spd)
-		_ = tick
+
+		if tick.OffCourse && !offCourse {
+			log.Printf("OFF-COURSE ALARM: heading %.0f° is %.0f° off the locked course", heading, tick.Error)
+		}
+		offCourse = tick.OffCourse
 	}
 }
 
@@ -151,4 +165,27 @@ func setpointOf(k *controller.CourseKeeper) float64 {
 		return k.DesiredCOG()
 	}
 	return k.DesiredHeading()
+}
+
+// runRamTest sweeps the ram to starboard, then port, then back toward centre,
+// so the installer can confirm direction and travel on the bench/dock. Per the
+// ST4000 manual: driving toward +rudder should move the tiller to produce a
+// turn to STARBOARD; if it goes the other way, flip mount_side in the config.
+func runRamTest(r *ram.PiRam, maxRudder float64) {
+	drive := func(label string, rudder float64, secs float64) {
+		log.Printf("ram test: %s (%.0f°) for %.0fs — watch the tiller", label, rudder, secs)
+		dt := 0.05
+		for t := 0.0; t < secs; t += dt {
+			r.Command(rudder, dt)
+			time.Sleep(time.Duration(dt * float64(time.Second)))
+		}
+		r.Stop()
+		time.Sleep(500 * time.Millisecond)
+	}
+	log.Println("ram test starting — keep clear of the tiller")
+	drive("STARBOARD — tiller should give a turn to starboard", maxRudder, 3)
+	drive("PORT — tiller should give a turn to port", -maxRudder, 3)
+	drive("CENTRE", 0, 2)
+	r.Stop()
+	log.Println("ram test done. If starboard/port were reversed, set mount_side to the other side.")
 }

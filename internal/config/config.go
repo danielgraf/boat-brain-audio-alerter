@@ -58,6 +58,11 @@ type Autopilot struct {
 	SpeedScheduling  bool    `json:"speed_scheduling"`
 	MinSpeedKnots    float64 `json:"min_speed_knots"`
 	HeadingFilterTau float64 `json:"heading_filter_tau"`
+
+	// Off-course alarm (ST4000 style): flag when the actual heading is off the
+	// locked heading by more than OffCourseDeg for longer than OffCourseSecs.
+	OffCourseDeg  float64 `json:"off_course_deg"`
+	OffCourseSecs float64 `json:"off_course_secs"`
 }
 
 // Default returns a well-damped default configuration.
@@ -69,6 +74,12 @@ func Default() Autopilot {
 	p.Limits.OutputMin, p.Limits.OutputMax = -30, 30
 	p.Limits.SlewRate = 15
 	p.Limits.IntegralLimit = 20
+	// Auto seastate on by default (as the ST4000 ships): the deadband widens
+	// from 1.5° up to 6° with sea-state wiggle.
+	p.AdaptiveDeadband = true
+	p.DeadbandMax = 6
+	p.SeastateGain = 1.2
+	p.SeastateTau = 4
 
 	cal := ram.DefaultCalibration()
 	cal.DeadbandStroke = 0.03
@@ -85,6 +96,8 @@ func Default() Autopilot {
 		SpeedScheduling:  true,
 		MinSpeedKnots:    1.0,
 		HeadingFilterTau: 1.5,
+		OffCourseDeg:     20,
+		OffCourseSecs:    20,
 	}
 	_ = c.Autotune()
 	return c
