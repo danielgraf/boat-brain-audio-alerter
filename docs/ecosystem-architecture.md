@@ -187,9 +187,14 @@ adapter.
    NavSource; publishes 127237 + proprietary status/command; ISO address
    claiming; BTS7960 PiRam behind `BOAT_BRAIN_RAM=gpio`. Also carries the wind
    for windvane + the gybe guard.
-5. **Wind safety + modes** (next, "back to the autopilot") — done so far: wind
-   telemetry, sail-zone, gybe/tack guard (refuse-through-wind). To do: windvane /
-   into-wind / auto-tack strategies + "steer the long way round" avoidance.
+5. **Wind safety + modes** — done: wind telemetry, sail-zone, gybe/tack guard
+   (refuse-through-wind, now **configurable** — armed by default, drop either via
+   config or a runtime `set_guard`); **windvane** (hold a true-wind angle),
+   **into-wind** (steer to the eye for sail handling), and **auto-tack** (one-shot
+   through-the-eye manoeuvre that mirrors the wind angle onto the new bow and
+   restores the prior mode). Modes drive the existing inner heading loop from the
+   supervisor. To do: "steer the long way round" active gybe avoidance +
+   TWS-based caution.
 6. **Panel link + autopilot screen** — brain-side panel protocol (USB CDC now,
    RS-485 later) with the new `AutopilotState`/`AutopilotCommand` messages; the
    real smart-knob compass renderer + local menu state machine.
