@@ -170,6 +170,9 @@ reference/python   the earlier Python prototype (control core + sim harness)
 
 ## Hardware notes (Pi)
 
+**Bench testing:** see [`docs/bench-wiring.md`](docs/bench-wiring.md) for a
+step-by-step wiring + first-power-up guide (bench PSU, Pi, BTS7960, actuator).
+
 Target rig: **Raspberry Pi → BTS7960 (IBT-2 / HW-039) H-bridge → rod-type push-rod
 tiller actuator** (e.g. Raymarine/Autohelm ST-series tiller drive). The drive is
 just a **reversible DC motor**: three pins, one to extend (out), one to retract
