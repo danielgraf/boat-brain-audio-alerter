@@ -97,7 +97,7 @@ build against.
 
 | Field | Type | Notes |
 |---|---|---|
-| `mode` | enum | standby, heading, cog, windvane, into-wind, tack |
+| `mode` | enum | standby, heading, cog, windvane, into-wind, tack, **nav** |
 | `engaged` | bool | actively driving the helm |
 | `desired` | deg | setpoint in the mode's reference (heading / COG / wind angle) |
 | `actual` | deg | actual value in that reference |
@@ -107,9 +107,12 @@ build against.
 | `steer_dir` | enum | port / centre / stbd — the "hunting" arrow (sign of rudder) |
 | `lock` | enum | **locked / close / hunting** — green / yellow / red |
 | `off_course` | bool | ST4000-style alarm (>limit for >delay) |
+| `accent` | token | mode colour hint; **nav = magenta** (the aviation "magenta line") |
 
 **Lock classifier** (shared Go helper, so sim + knobs colour identically):
 `locked` when `|error| ≤ deadband`; `close` when `≤ ~10°`; `hunting` beyond.
+**Accent** is the same idea for the mode: a shared `AccentFor(mode)` helper so
+every renderer draws nav-mode's route pointer magenta without hardcoding it.
 
 ### Commands (anyone → autopilot)
 
@@ -162,7 +165,7 @@ inner heading PID. Adding one is a small, isolated change.
 | **windvane** | hold true-wind angle → setpoint tracks the wind (have) |
 | **into-wind** | steer to TWA ≈ 0 and hold — for reefing/sail handling (have) |
 | **tack** | one-shot manoeuvre: through the eye to the mirror-image close-hauled heading (have) |
-| **track** | follow a route: slave the COG loop to the active waypoint's bearing from N2K nav data (have) |
+| **nav** | follow the plotter's route: slave the COG loop to the active waypoint's bearing from N2K nav data — **magenta** accent, aviation-style (have) |
 
 The controller's `Mode` becomes a small interface so windvane/into-wind/tack
 slot in beside heading/cog without touching the inner loop.
@@ -196,12 +199,13 @@ adapter.
    non-gybing way as a guided turn) with **TWS-scaled caution** (guards relax in
    benign light air, and a gybe is always steered round above a strong-wind
    threshold). Modes drive the existing inner loop from the supervisor.
-6. **Route following (track mode)** — done: consume N2K **129284** (bearing/
+6. **Route following (nav mode)** — done: consume N2K **129284** (bearing/
    distance to the active waypoint, fast-packet — RX reassembly added) and
-   **129283** (cross-track error); track mode slaves the COG loop to the waypoint
-   bearing so the boat follows a plotter's planned passage leg by leg. Next:
-   read the route list (**129285**) for waypoint names on panels, and optional
-   own-position leg sequencing (**129029**).
+   **129283** (cross-track error); nav mode slaves the COG loop to the waypoint
+   bearing so the boat follows a plotter's planned passage leg by leg, with a
+   **magenta** accent in the contract (aviation NAV). Next: read the route list
+   (**129285**) for waypoint names on panels, and optional own-position leg
+   sequencing (**129029**).
 7. **Panel link + autopilot screen** — brain-side panel protocol (USB CDC now,
    RS-485 later) with the new `AutopilotState`/`AutopilotCommand` messages; the
    real smart-knob compass renderer + local menu state machine.
