@@ -182,13 +182,17 @@ adapter.
 3. ~~**boat-brain integration** (control loop + contract over HTTP)~~ — done:
    supervisor runs the loop (sim-driven), `GET /autopilot/state` + `POST
    /autopilot/command`.
-4. **N2K gateway** (next) — SocketCAN/MCP2515: consume heading/COG/wind/rudder
-   PGNs → supervisor; publish 127237 + proprietary status. Turns the sim-driven
-   loop into a real pilot; also unlocks windvane (needs wind, N2K 130306).
-5. **Panel link + autopilot screen** — brain-side panel protocol (USB CDC now,
+4. ~~**N2K gateway**~~ — done, in `boat-brain/internal/autopilot/n2k`: SocketCAN
+   transport, consumes heading/ROT/COG-SOG/wind/rudder PGNs → supervisor via a
+   NavSource; publishes 127237 + proprietary status/command; ISO address
+   claiming; BTS7960 PiRam behind `BOAT_BRAIN_RAM=gpio`. Also carries the wind
+   for windvane + the gybe guard.
+5. **Wind safety + modes** (next, "back to the autopilot") — done so far: wind
+   telemetry, sail-zone, gybe/tack guard (refuse-through-wind). To do: windvane /
+   into-wind / auto-tack strategies + "steer the long way round" avoidance.
+6. **Panel link + autopilot screen** — brain-side panel protocol (USB CDC now,
    RS-485 later) with the new `AutopilotState`/`AutopilotCommand` messages; the
    real smart-knob compass renderer + local menu state machine.
-6. **Mode strategies** — generalise `Mode`; add windvane / into-wind / auto-tack.
 7. **Audio alerter** — `PlayAlert` peripheral + brain-side event→alert dispatch
    (first trigger: the autopilot `off_course` alarm + engage/disengage chimes).
 8. **Remote adapter** — BLE/WS onto the same contract.
