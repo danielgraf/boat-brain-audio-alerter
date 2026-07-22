@@ -13,18 +13,17 @@ package ram
 // "drive toward starboard rudder", LPWM "toward port". If the boat turns the
 // wrong way, flip MountSide in the calibration rather than swapping wires.
 //
-// ClutchPin drives the drive unit's clutch. On the ST4000+ the clutch line
-// (C+/C-) is "+12V if the Autopilot is engaged; otherwise 0V", so it is
-// energised for the whole time the pilot is in Auto (not just while the motor
-// moves) and released on Stop/standby so the helm is free for hand steering.
-// The clutch is an inductive 12V load: drive it via a relay or logic-level
-// MOSFET with a flyback diode, not straight from the GPIO. Set ClutchPin < 0
-// for a drive with no clutch.
+// The target drive is a rod-type push-rod tiller actuator: a plain reversible
+// motor with two leads (extend/retract) and no clutch or rudder reference. That
+// maps directly onto the BTS7960 — RPWM/LPWM drive the two motor leads, and
+// standby just stops the motor (the leadscrew self-holds; lift the rod off the
+// tiller pin to hand-steer).
 //
-// Maps to the ST4000+ drive interface: RPWM/LPWM -> the two motor leads
-// (MD1/MD2, via the BTS7960's motor output), EnablePin -> R_EN+L_EN,
-// ClutchPin -> C+ (C- to 0V). An optional 0-5V rudder reference (P9/P10) can be
-// read back through Feedback via an SPI ADC.
+// ClutchPin and Feedback below are optional extras for other drives (a
+// wheel/linear unit with a clutch, or one with a 0-5V rudder reference); leave
+// ClutchPin < 0 and Feedback nil for the rod tiller. When used, the clutch is an
+// inductive 12V load, so drive it via a relay or logic-level MOSFET with a
+// flyback diode, held engaged while in Auto and released on Stop/standby.
 //
 // Rudder-reference feedback is optional. With Feedback nil the driver
 // dead-reckons stroke from commanded motion; with a rudder pot, wire it through
