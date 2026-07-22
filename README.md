@@ -66,10 +66,10 @@ GOOS=linux GOARCH=arm64 go build -o autopilot ./cmd/autopilot
 # verify ram direction + travel on the bench FIRST (drives stbd/port/centre):
 sudo ./autopilot -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -test-ram
 
-# then run it (ST4000 tiller has no clutch, so -clutch-pin defaults to none):
+# then run it (clutch on GPIO6 via a relay/MOSFET; -clutch-pin -1 if none):
 sudo ./autopilot -device /dev/ttyAMA0 -baud 4800 \
      -config /etc/boatbrain/autopilot.json \
-     -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -cog 90
+     -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -clutch-pin 6 -cog 90
 ```
 
 `-heading H` holds a compass heading; `-cog C` holds a ground course; neither =
@@ -171,42 +171,52 @@ reference/python   the earlier Python prototype (control core + sim harness)
 ## Hardware notes (Pi)
 
 Target rig: **Raspberry Pi → BTS7960 (IBT-2 / HW-039) H-bridge → Raymarine /
-Autohelm ST4000 drive**.
+Autohelm ST4000+ drive**. The BTS7960 replaces the course computer's internal
+H-bridge; everything else follows the drive interface in the ST4000+ service
+manual.
 
-**BTS7960 wiring** (logic header: RPWM, LPWM, R_EN, L_EN, R_IS, L_IS, VCC, GND):
+**ST4000+ drive interface → this rig** (from the service manual's connector table):
+
+| ST4000+ pin | Original signal | Wire to |
+|---|---|---|
+| **MD1 / MD2** | motor drive (PWM'd H-bridge, ~1–2Ω motor, <2A run / ~6.5A stall) | **BTS7960 motor output** (the two motor leads) |
+| **C+ / C–** | clutch: "+12V while engaged, else 0V" | **clutch relay/MOSFET** on `-clutch-pin` (C+), C– to 0V |
+| **P9 / P10 / P11** | rudder reference 0–5V / 0V / screen | **SPI ADC** → `Feedback` (optional) |
+| **NMEA in ± / SeaTalk** | comms | serial `/dev/ttyAMA0` |
+
+**BTS7960 logic side → Pi** (header: RPWM, LPWM, R_EN, L_EN, R_IS, L_IS, VCC, GND):
 
 | BTS7960 | Pi (BCM) | Notes |
 |---|---|---|
-| VCC | 3V3 | BTS7960 logic is happy at 3.3 V |
-| GND | GND | common ground with the Pi |
-| RPWM | GPIO18 (`-rpwm-pin`) | drives toward **starboard** rudder |
-| LPWM | GPIO13 (`-lpwm-pin`) | drives toward **port** rudder |
-| R_EN + L_EN | GPIO12 (`-en-pin`) | tie the two together to one pin; `<0` if you hardwire them to VCC |
+| VCC / GND | 3V3 / GND | BTS7960 logic runs at 3.3 V; common ground |
+| RPWM | GPIO18 (`-rpwm-pin`) | drives toward **starboard** rudder (→ one motor lead) |
+| LPWM | GPIO13 (`-lpwm-pin`) | drives toward **port** rudder (→ other motor lead) |
+| R_EN + L_EN | GPIO12 (`-en-pin`) | tie together to one pin; `<0` if hardwired to VCC |
 | R_IS / L_IS | — | current sense (unused; optional over-current cut-out later) |
 
-Motor output (B+/B-) goes to the drive unit's motor; the module's big
-screw terminals take the 12 V battery feed. Direction is decided in software,
-so if the boat turns the wrong way just flip `mount_side` in the config — no
-rewiring.
+The module's big screw terminals take the 12 V battery feed (fuse it for the
+drive — a few amps for the tiller motor). Direction is decided in software, so
+if the boat turns the wrong way just flip `mount_side` — no rewiring.
 
-- **No clutch on the ST4000 _tiller_ drive** — it's a leadscrew push-rod: standby
-  just stops the motor (the leadscrew self-holds) and you lift the push-rod off
-  the tiller pin to hand-steer. So `-clutch-pin` defaults to none. The clutch
-  option is only for wheel/linear drives that have one (relay/MOSFET on the pin,
-  energised while engaged, released on standby).
+- **Clutch (C+/C–)** — the ST4000+ energises the clutch for the *whole* time the
+  pilot is in Auto (not just while the motor moves), and drops it on standby so
+  the helm is free. The driver does exactly this. It's an inductive 12 V load, so
+  drive it through a **relay or logic-level MOSFET with a flyback diode**, never
+  straight off the GPIO. `-clutch-pin 6` by default; `-1` for a clutchless drive.
 - **Safe power-up** — a Pi's GPIOs are inputs (hi-Z) until the program drives
-  them, so fit **pull-down resistors (~10 kΩ) on RPWM, LPWM and EN** to hold the
-  bridge off at boot. The driver also drives all three low before enabling.
+  them, so fit **pull-down resistors (~10 kΩ) on RPWM, LPWM and EN** (and on the
+  clutch driver's gate) to hold everything off at boot. The driver also drives
+  them low before enabling, and releases the clutch on exit.
 - **Verify phase first** — run `-test-ram` on the bench: it drives starboard,
   then port, then centre. Per the manual, `+rudder` must move the tiller to give
   a **turn to starboard**; if reversed, flip `mount_side` (don't rewire). A
   reversed phase is the classic "steers hard over on engage" failure.
 - **Ram speed** — bang-bang (full speed) by default, which is the most reliable.
-  `-pwm-hz 200` enables best-effort software PWM so the ram eases off near
-  target for a softer landing.
-- **Rudder feedback** — optional. With none, stroke is dead-reckoned; with a
-  rudder-reference pot, wire it through an SPI ADC (e.g. MCP3008) and supply a
-  `Feedback` func to `PiRam`.
+  `-pwm-hz 200` enables best-effort software PWM so the ram eases off near target
+  for a softer landing — matching the original's "variable-length pulses" drive.
+- **Rudder reference (0–5V)** — optional true feedback: wire P9/P10 through an
+  SPI ADC (e.g. MCP3008; scale 5V→3.3V) and supply a `Feedback` func to `PiRam`.
+  Without it, stroke is dead-reckoned.
 - **NMEA** — 4800 baud on `/dev/ttyAMA0` (Pi UART) or a USB-serial GPS/compass
   on `/dev/ttyUSB0`. HDT/HDM/HDG (heading), RMC/VTG (COG+SOG), ROT (rate of
   turn — used directly when present, far cleaner than differentiating a compass).

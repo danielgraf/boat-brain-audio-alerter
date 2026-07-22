@@ -168,21 +168,24 @@ func (r *PiRam) currentStroke() float64 {
 // "dead-range" that stops the helm chattering); otherwise it engages the clutch,
 // enables the bridge, and sets direction + speed for the PWM loop.
 func (r *PiRam) Command(rudderDeg, dt float64) float64 {
-	target := r.cal.RudderToStroke(rudderDeg)
-	cur := r.currentStroke()
-	errStroke := target - cur
-
-	if r.cal.DeadbandStroke > 0 && abs(errStroke) < r.cal.DeadbandStroke {
-		r.hold()
-		return r.cal.StrokeToRudder(cur)
-	}
-
-	// Clutch in and bridge enabled while actively driving.
+	// Command is called every tick while the pilot is engaged, so keep the
+	// clutch engaged and the bridge enabled the whole time — matching the
+	// ST4000+ interface where C+ is +12V for as long as the pilot is in Auto,
+	// independent of whether the motor is currently moving. (Stop releases both.)
 	if r.clu != nil {
 		r.clu.set(true)
 	}
 	if r.en != nil {
 		r.en.set(true)
+	}
+
+	target := r.cal.RudderToStroke(rudderDeg)
+	cur := r.currentStroke()
+	errStroke := target - cur
+
+	if r.cal.DeadbandStroke > 0 && abs(errStroke) < r.cal.DeadbandStroke {
+		r.hold() // motor off within the dead-range; clutch stays engaged
+		return r.cal.StrokeToRudder(cur)
 	}
 
 	// Direction, with the mount-side drive sign folded in.

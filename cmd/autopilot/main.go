@@ -7,6 +7,9 @@
 //	     -config /etc/boatbrain/autopilot.json \
 //	     -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -clutch-pin 6 -cog 90
 //
+// The clutch (ST4000+ C+/C-) is held engaged while in Auto and released on
+// standby/exit. Use -clutch-pin -1 for a drive without a clutch.
+//
 // Use -cog to hold a course over ground, -heading for a compass heading. With
 // neither, it engages on the first heading it sees ("hold what I've got").
 package main
@@ -35,7 +38,7 @@ func main() {
 		rpwmPin   = flag.Int("rpwm-pin", 18, "BCM pin -> BTS7960 RPWM (drive toward starboard rudder)")
 		lpwmPin   = flag.Int("lpwm-pin", 13, "BCM pin -> BTS7960 LPWM (drive toward port rudder)")
 		enPin     = flag.Int("en-pin", 12, "BCM pin -> BTS7960 R_EN+L_EN (tied together); <0 if hardwired high")
-		clutchPin = flag.Int("clutch-pin", -1, "BCM pin -> drive-unit clutch; <0 for none (ST4000 tiller has no clutch)")
+		clutchPin = flag.Int("clutch-pin", 6, "BCM pin -> clutch relay/MOSFET (ST4000+ C+); <0 for a drive with no clutch")
 		pwmHz     = flag.Float64("pwm-hz", 0, "software PWM freq for ram speed (0 = bang-bang / full speed)")
 		testRam   = flag.Bool("test-ram", false, "drive the ram starboard/port/centre and exit (verify phase + travel)")
 		holdHead  = flag.Float64("heading", -1, "heading to hold (deg); <0 = hold current")
