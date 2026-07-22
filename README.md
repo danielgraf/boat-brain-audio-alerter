@@ -66,7 +66,7 @@ GOOS=linux GOARCH=arm64 go build -o autopilot ./cmd/autopilot
 # on the Pi:
 sudo ./autopilot -device /dev/ttyAMA0 -baud 4800 \
      -config /etc/boatbrain/autopilot.json \
-     -stbd-pin 23 -port-pin 24 -cog 90
+     -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -clutch-pin 6 -cog 90
 ```
 
 `-heading H` holds a compass heading; `-cog C` holds a ground course; neither =
@@ -149,10 +149,36 @@ reference/python   the earlier Python prototype (control core + sim harness)
 
 ## Hardware notes (Pi)
 
-- **Ram** — two GPIO lines through an H-bridge/relay board (`-stbd-pin`,
-  `-port-pin`); mount-side sign is applied in software. Rudder-reference
-  feedback is optional: with none, stroke is dead-reckoned; with a pot, wire it
-  through an SPI ADC (e.g. MCP3008) and supply a feedback function to `PiRam`.
+Target rig: **Raspberry Pi → BTS7960 (IBT-2 / HW-039) H-bridge → Raymarine /
+Autohelm ST4000 drive**.
+
+**BTS7960 wiring** (logic header: RPWM, LPWM, R_EN, L_EN, R_IS, L_IS, VCC, GND):
+
+| BTS7960 | Pi (BCM) | Notes |
+|---|---|---|
+| VCC | 3V3 | BTS7960 logic is happy at 3.3 V |
+| GND | GND | common ground with the Pi |
+| RPWM | GPIO18 (`-rpwm-pin`) | drives toward **starboard** rudder |
+| LPWM | GPIO13 (`-lpwm-pin`) | drives toward **port** rudder |
+| R_EN + L_EN | GPIO12 (`-en-pin`) | tie the two together to one pin; `<0` if you hardwire them to VCC |
+| R_IS / L_IS | — | current sense (unused; optional over-current cut-out later) |
+
+Motor output (B+/B-) goes to the drive unit's motor; the module's big
+screw terminals take the 12 V battery feed. Direction is decided in software,
+so if the boat turns the wrong way just flip `mount_side` in the config — no
+rewiring.
+
+- **Clutch (ST4000/linear drives)** — the drive engages a clutch to couple the
+  motor to the helm. Wire the clutch through a relay/MOSFET on `-clutch-pin`
+  (GPIO6 by default). It's energised while engaged and **released on standby**,
+  so the wheel/tiller is free for hand steering. Set `-clutch-pin -1` for a
+  leadscrew drive with no clutch.
+- **Ram speed** — bang-bang (full speed) by default, which is the most reliable.
+  `-pwm-hz 200` enables best-effort software PWM so the ram eases off near
+  target for a softer landing.
+- **Rudder feedback** — optional. With none, stroke is dead-reckoned; with a
+  rudder-reference pot, wire it through an SPI ADC (e.g. MCP3008) and supply a
+  `Feedback` func to `PiRam`.
 - **NMEA** — 4800 baud on `/dev/ttyAMA0` (Pi UART) or a USB-serial GPS/compass
   on `/dev/ttyUSB0`. HDT/HDM/HDG (heading), RMC/VTG (COG+SOG), ROT (rate of
   turn — used directly when present, far cleaner than differentiating a compass).

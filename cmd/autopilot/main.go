@@ -1,13 +1,14 @@
 // Command autopilot is the on-boat binary: it reads NMEA from a serial port,
-// runs the heading/COG-hold controller, and drives the auto-helm ram over
-// Raspberry Pi GPIO.
+// runs the heading/COG-hold controller, and drives the auto-helm drive (a
+// Raymarine/Autohelm ST-series unit) through a BTS7960 H-bridge on Raspberry Pi
+// GPIO.
 //
 //	sudo ./autopilot -device /dev/ttyAMA0 -baud 4800 \
 //	     -config /etc/boatbrain/autopilot.json \
-//	     -stbd-pin 23 -port-pin 24 -heading 90
+//	     -rpwm-pin 18 -lpwm-pin 13 -en-pin 12 -clutch-pin 6 -cog 90
 //
-// Use -cog instead of -heading to hold a course over ground. With neither, it
-// engages on the first heading it sees ("hold what I've got").
+// Use -cog to hold a course over ground, -heading for a compass heading. With
+// neither, it engages on the first heading it sees ("hold what I've got").
 package main
 
 import (
@@ -28,14 +29,17 @@ import (
 
 func main() {
 	var (
-		device   = flag.String("device", "/dev/ttyAMA0", "NMEA serial device")
-		baud     = flag.Int("baud", 4800, "serial baud rate")
-		cfgPath  = flag.String("config", "", "autopilot config JSON (optional)")
-		stbdPin  = flag.Int("stbd-pin", 23, "BCM GPIO pin driving toward starboard rudder")
-		portPin  = flag.Int("port-pin", 24, "BCM GPIO pin driving toward port rudder")
-		holdHead = flag.Float64("heading", -1, "heading to hold (deg); <0 = hold current")
-		holdCOG  = flag.Float64("cog", -1, "course over ground to hold (deg); enables COG track")
-		hz       = flag.Float64("hz", 10, "control loop rate (Hz)")
+		device    = flag.String("device", "/dev/ttyAMA0", "NMEA serial device")
+		baud      = flag.Int("baud", 4800, "serial baud rate")
+		cfgPath   = flag.String("config", "", "autopilot config JSON (optional)")
+		rpwmPin   = flag.Int("rpwm-pin", 18, "BCM pin -> BTS7960 RPWM (drive toward starboard rudder)")
+		lpwmPin   = flag.Int("lpwm-pin", 13, "BCM pin -> BTS7960 LPWM (drive toward port rudder)")
+		enPin     = flag.Int("en-pin", 12, "BCM pin -> BTS7960 R_EN+L_EN (tied together); <0 if hardwired high")
+		clutchPin = flag.Int("clutch-pin", 6, "BCM pin -> drive-unit clutch; <0 for no clutch")
+		pwmHz     = flag.Float64("pwm-hz", 0, "software PWM freq for ram speed (0 = bang-bang / full speed)")
+		holdHead  = flag.Float64("heading", -1, "heading to hold (deg); <0 = hold current")
+		holdCOG   = flag.Float64("cog", -1, "course over ground to hold (deg); enables COG track")
+		hz        = flag.Float64("hz", 10, "control loop rate (Hz)")
 	)
 	flag.Parse()
 
@@ -48,11 +52,16 @@ func main() {
 		cfg = loaded
 	}
 
-	// Open the ram driver (Raspberry Pi GPIO).
+	// Open the ram driver: BTS7960 (IBT-2) H-bridge + drive-unit clutch.
 	piRam, err := ram.NewPiRam(cfg.Ram, ram.PiConfig{
-		StarboardPin: *stbdPin,
-		PortPin:      *portPin,
-		SpeedStroke:  cfg.RamSpeedStroke,
+		RPWMPin:        *rpwmPin,
+		LPWMPin:        *lpwmPin,
+		EnablePin:      *enPin,
+		ClutchPin:      *clutchPin,
+		PWMHz:          *pwmHz,
+		MinDuty:        0.35,
+		RampBandStroke: 2 * cfg.Ram.DeadbandStroke,
+		SpeedStroke:    cfg.RamSpeedStroke,
 	})
 	if err != nil {
 		log.Fatalf("ram: %v", err)
