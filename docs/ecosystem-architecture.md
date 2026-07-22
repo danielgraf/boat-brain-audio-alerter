@@ -10,6 +10,7 @@ where the planned extensions (phone/watch remote, extra steering modes) slot in.
 | **boat-brain** | Go | Central **non-real-time hub** on a Pi (Docker). N2K gateway, panel coordinator, sensor fusion, hosts/coordinates the autopilot. Early scaffold today. |
 | **boat-brain-audio-alerter** (this) | Go | The **autopilot**: damped PID + Nomoto auto-tune + COG cascade, ram driver, simulator. Control core is reusable as a library. |
 | **boat-brain-panel** | C++ (Pico SDK) | **Panel/knob firmware** on RP2040 / Feather-CAN. Serial slot protocol to the brain, encoder input, display renderers (smart-knob renderer is a stub). |
+| **audio-alerter** (repurposes the old `boat-brain-audio-alerter` name/intent) | C++ (Pico SDK) | **Sound peripheral**: Pico + amp → exciter/surface-transducer speaker. A command-sink satellite of the brain — plays alert sounds on brain events (off-course, engage/disengage, N2K alarms). |
 
 ## Topology
 
@@ -39,6 +40,32 @@ One rule holds everything together: **there is a single control contract**
 the web simulator — is just an *adapter* onto that one contract, and the
 autopilot is the single source of truth. Two knobs, a phone, and an MFD can all
 watch/command it and never disagree.
+
+## Peripheral nodes & transport
+
+The brain's satellites are all **RP2040 nodes speaking one framed protocol** over
+a transport chosen behind the firmware's `ICommsLink` abstraction — so the wire
+is a swap, not a redesign. Two kinds:
+
+- **Panels / knobs** — display + input (slots, encoder). Interactive autopilot
+  screen is a new message pair on top.
+- **Audio alerter** — a *command sink* (no display): the brain sends
+  `PlayAlert(id, priority)` and the Pico drives an exciter speaker. Triggered by
+  brain events, first of which is the autopilot's `off_course` alarm plus
+  engage/disengage chimes; later, N2K alarms (depth, battery, anchor drag).
+
+Transport tiers (identical protocol across all):
+
+| Scale | Wire | Notes |
+|---|---|---|
+| Bench + a couple of nodes near the Pi (helm, nav-station, alerter) | **USB CDC** (now) | each Pico = one `/dev/ttyACM*`; powers the Pico; already implemented in `SerialComms` |
+| Many / distributed nodes | **RS-485 multidrop** | one differential pair, addressed by `panel_id` (already in the protocol), long robust runs; firmware unchanged |
+| Phone / watch "virtual panels" | **WebSocket / BLE** | no wire; same control contract |
+
+USB's real limits on a boat are cable length (~5 m) and connector robustness, so
+it's the near-term choice for nodes near the Pi; RS-485 is the growth path.
+**N2K stays the *sensor/interop* bus, not the panel bus** — panels use our own
+protocol; the brain aggregates N2K and bridges the two.
 
 ## Where the autopilot runs
 
@@ -149,23 +176,32 @@ adapter.
 
 ## Build order
 
-1. **Library-ify the autopilot core** — move the control packages to an
-   importable path so `boat-brain` can import them; keep `cmd/*` + sim here.
-2. **Lock-state classifier + steer_dir** in the Go controller (small; the sim
-   uses it too).
-3. **Mode strategy refactor** — generalise `Mode`; add windvane/into-wind/tack.
-4. **boat-brain integration** — N2K gateway (SocketCAN) + host the control loop;
-   panel serial link; the control-contract hub.
-5. **Panel autopilot screen** — `AutopilotState`/`AutopilotCommand` messages +
-   the real smart-knob compass renderer + the menu state machine.
-6. **Remote adapter** — BLE/WS onto the same contract.
+1. ~~**Library-ify the autopilot core**~~ — done: control packages now live in
+   `boat-brain/internal/autopilot/…`.
+2. ~~**Lock-state classifier + steer_dir**~~ — done, in `.../autopilot/control`.
+3. ~~**boat-brain integration** (control loop + contract over HTTP)~~ — done:
+   supervisor runs the loop (sim-driven), `GET /autopilot/state` + `POST
+   /autopilot/command`.
+4. **N2K gateway** (next) — SocketCAN/MCP2515: consume heading/COG/wind/rudder
+   PGNs → supervisor; publish 127237 + proprietary status. Turns the sim-driven
+   loop into a real pilot; also unlocks windvane (needs wind, N2K 130306).
+5. **Panel link + autopilot screen** — brain-side panel protocol (USB CDC now,
+   RS-485 later) with the new `AutopilotState`/`AutopilotCommand` messages; the
+   real smart-knob compass renderer + local menu state machine.
+6. **Mode strategies** — generalise `Mode`; add windvane / into-wind / auto-tack.
+7. **Audio alerter** — `PlayAlert` peripheral + brain-side event→alert dispatch
+   (first trigger: the autopilot `off_course` alarm + engage/disengage chimes).
+8. **Remote adapter** — BLE/WS onto the same contract.
 
 ## Open decisions
 
-- **Autopilot home**: import into `boat-brain` (recommended) vs keep a separate
-  Go service talking over a socket/CAN.
 - **Panels on N2K?**: keep serial-to-brain (recommended near-term) vs move panels
   onto the Feather-CAN backbone as independent N2K nodes (more decoupled, more
-  work, needs N2K on the Pico via Timo Lappalainen's library).
+  work, needs N2K on the Pico via Timo Lappalainen's library). **Resolved:**
+  panels use our own protocol over USB CDC → RS-485; N2K is the sensor bus only.
 - **PGN numbers**: pick the proprietary PGN range + a manufacturer code for the
   boat-brain command/telemetry PGNs.
+- **`boat-brain-audio-alerter` repo**: the autopilot has moved into `boat-brain`,
+  so this repo can return to its original intent (the audio-alerter sound
+  peripheral) — while keeping the simulator + web visualiser as the autopilot
+  dev sandbox. Keep as sandbox for now, or start reshaping toward the alerter.
